@@ -96,7 +96,10 @@ is_leaf(Node) ->
 %% Split a leaf node that has exceeded max_node_entries using
 %% the quadratic method
 quadratic_split(Values) -> 
-	{Seed1,Seed2} = quadratic_pick_seeds(Values).
+	{Seed1,Seed2} = quadratic_pick_seeds(Values),
+	Clean1 = lists:delete(Seed1, Values),
+	Clean2 = lists:delete(Seed2, Clean1),
+	Clean2.
 
 %% Choose two elements from the max_node_entries+1 value list
 %% by finding the most "wasteful" bounding box of two antipodal figures
@@ -104,7 +107,9 @@ quadratic_pick_seeds(Values) ->
 	CombinationValues = all_combinations(Values, []),
 	{_, {_, FinalBoundingBox, Seeds} } = lists:mapfoldl(
 	fun({Figure1,Figure2}=Elem, {D,_BB,Pair}=Acc) -> 
-		BoundingBox = generate_bounding_box(Elem),
+	    io:format("Figure1 = ~p Figure2 = ~p ~n", [Figure1, Figure2]),
+        % BoundingBox = generate_bounding_box(Elem),
+        BoundingBox = generate_bounding_box_list([Figure1,Figure2]),
 		Figure1Area = figure_area(Figure1),
 		Figure2Area = figure_area(Figure2),
 		if BoundingBox#boundingbox.area - (Figure1Area - Figure2Area) > D ->
@@ -136,54 +141,109 @@ figure_area(Figure1) ->
 	{F1rm_x,_F1rm_y} = F1rm,
 	Figure1Area = abs(F1lm_x - F1rm_x) * abs(F1tm_y - F1bm_y).
 
-%% Generate a bounding box around two rectangular figures
-generate_bounding_box({Figure1, Figure2}) -> 
-	% {Figure1, Figure2} = H,
-	
-	io:format("Figure1, Figure2 = ~p ~p ~n", [Figure1, Figure2]),
-	F1rm = rightmost_point(Figure1),
-	F2rm = rightmost_point(Figure2),
-	F1tm = topmost_point(Figure1),
-	F2tm = topmost_point(Figure2),
-	
-	if F1tm > F2tm ->
-		{_,TopCoordinate} = F1tm;
-	true ->
-		{_,TopCoordinate} = F2tm
-	end,
-	
-	if F1rm > F2rm ->
-		{RightCoordinate,_} = F1rm;
-	true ->
-	    {RightCoordinate,_} = F2rm
-	end,
-	F1lm = leftmost_point(Figure1),
-	F2lm = leftmost_point(Figure2),
-	F1bm = bottommost_point(Figure1),
-	F2bm = bottommost_point(Figure2),
-	
-	if F1bm < F2bm ->
-		{_,BottomCoordinate} = F1bm;
-	true ->
-		{_,BottomCoordinate} = F2bm
-	end,
-	
-	if F1lm < F2lm ->
-		{LeftCoordinate,_} = F1lm;
-	true ->
-		{LeftCoordinate,_} = F2lm
-	end,
-	
-	TopEdgeLength = abs(LeftCoordinate - RightCoordinate),
-	SideEdgeLength = abs(TopCoordinate - BottomCoordinate),
+
+%%  Generate a bounding box around arbitrary number of rectangles
+generate_bounding_box_list(Figures) ->
+    %Find the greatest Y coordinate
+    {_, {FinalTopY,FinalTopPoint}} = lists:mapfoldl(fun(Figure, {TopYValue, _TopPoint}=Acc) ->
+        {X,Y} = topmost_point(Figure),
+        if Y > TopYValue ->
+            {Figure, {Y, {X,Y}} };
+        true ->
+            {Figure, Acc}
+        end
+    end, {0,{}}, Figures),
+    
+    
+    {_, {FinalBottomY,FinalBottomPoint}} = lists:mapfoldl(fun(Figure, {BottomYValue, _BottomPoint}=Acc) ->
+        {_X,Y}=NewBottomPoint = bottommost_point(Figure),
+        if Y < BottomYValue ->
+            {Figure, {Y, NewBottomPoint} };
+        true ->
+            {Figure, Acc}
+        end
+    end, {infinity,{}}, Figures),
+    
+    {_, {FinalLeftX,FinalLeftPoint}} = lists:mapfoldl(fun(Figure, {LeftXValue, _LeftPoint}=Acc) ->
+        {X,_Y}=NewLeftPoint = leftmost_point(Figure),
+        if X < LeftXValue ->
+            {Figure, {X, NewLeftPoint} };
+        true ->
+            {Figure, Acc}
+        end
+    end, {infinity,{}}, Figures),
+    
+    {_, {FinalRightX,FinalRightPoint}} = lists:mapfoldl(fun(Figure, {RightXValue, _RightPoint}=Acc) ->
+        {X,_Y}=NewRightPoint = rightmost_point(Figure),
+        if X > RightXValue ->
+            {Figure, {X, NewRightPoint} };
+        true ->
+            {Figure, Acc}
+        end
+    end, {0,{}}, Figures),
+    
+    TopEdgeLength = abs(FinalLeftX - FinalRightX),
+	SideEdgeLength = abs(FinalTopY - FinalBottomY),
 	BBArea = TopEdgeLength * SideEdgeLength,
 	BoundingBox = #boundingbox{ area=BBArea, 
-	    topleft={LeftCoordinate,TopCoordinate},
-	    topright={RightCoordinate, TopCoordinate}, 
-	    bottomright={RightCoordinate, BottomCoordinate}, 
-	    bottomleft={LeftCoordinate, BottomCoordinate} },
-	
-	BoundingBox.	
+	    topleft={FinalLeftX,FinalTopY},
+	    topright={FinalRightX, FinalTopY}, 
+	    bottomright={FinalRightX, FinalBottomY}, 
+	    bottomleft={FinalLeftX, FinalBottomY} },
+	    
+	io:format("Bounding box2 = ~p ~n", [BoundingBox]),
+	BoundingBox.
+
+%% Generate a bounding box around two rectangular figures
+% generate_bounding_box({Figure1, Figure2}) -> 
+%   % {Figure1, Figure2} = H,
+%   
+%     % io:format("Figure1, Figure2 = ~p ~p ~n", [Figure1, Figure2]),
+%   F1rm = rightmost_point(Figure1),
+%   F2rm = rightmost_point(Figure2),
+%   F1tm = topmost_point(Figure1),
+%   F2tm = topmost_point(Figure2),
+%   
+%   if F1tm > F2tm ->
+%       {_,TopCoordinate} = F1tm;
+%   true ->
+%       {_,TopCoordinate} = F2tm
+%   end,
+%   
+%   if F1rm > F2rm ->
+%       {RightCoordinate,_} = F1rm;
+%   true ->
+%       {RightCoordinate,_} = F2rm
+%   end,
+%   F1lm = leftmost_point(Figure1),
+%   F2lm = leftmost_point(Figure2),
+%   F1bm = bottommost_point(Figure1),
+%   F2bm = bottommost_point(Figure2),
+%   
+%   if F1bm < F2bm ->
+%       {_,BottomCoordinate} = F1bm;
+%   true ->
+%       {_,BottomCoordinate} = F2bm
+%   end,
+%   
+%   if F1lm < F2lm ->
+%       {LeftCoordinate,_} = F1lm;
+%   true ->
+%       {LeftCoordinate,_} = F2lm
+%   end,
+%   
+%   TopEdgeLength = abs(LeftCoordinate - RightCoordinate),
+%   SideEdgeLength = abs(TopCoordinate - BottomCoordinate),
+%   BBArea = TopEdgeLength * SideEdgeLength,
+%   BoundingBox = #boundingbox{ area=BBArea, 
+%       topleft={LeftCoordinate,TopCoordinate},
+%       topright={RightCoordinate, TopCoordinate}, 
+%       bottomright={RightCoordinate, BottomCoordinate}, 
+%       bottomleft={LeftCoordinate, BottomCoordinate} },
+%   
+%   io:format("Bounding box = ~p ~n", [BoundingBox]),
+%   
+%   BoundingBox.	
 	
 %% Find the right-most point of a two dimensional figure
 rightmost_point({Point1,Point2}=_Figure) -> 
