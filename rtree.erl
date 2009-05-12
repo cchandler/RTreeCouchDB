@@ -99,7 +99,26 @@ quadratic_split(Values) ->
 	{Seed1,Seed2} = quadratic_pick_seeds(Values),
 	Clean1 = lists:delete(Seed1, Values),
 	Clean2 = lists:delete(Seed2, Clean1),
-	Clean2.
+	Group1 = [Seed1],
+	Group2 = [Seed2],
+	% For each elemen in the remaining values go through and add
+	% that point to the group that would require the least increase in
+	% area to accomodate 
+	% Note: does not fully implement PickNext, uses a heuristic instead
+	SplitGroups = lists:foldl(fun(Elem, {{G1,BB1},{G2,BB2}}=Acc) -> 
+        % io:format("Starting fold Elem= ~p Acc= ~p ~n", [Elem, Acc]),
+        % io:format("G1 ++ Elem = ~p ~n", [G1 ++ Elem]),
+	    Group1BB = generate_bounding_box_list(G1 ++ [Elem]),
+	    Group2BB = generate_bounding_box_list(G2 ++ [Elem]),
+	    if (Group1BB#boundingbox.area - BB1#boundingbox.area) >=  (Group2BB#boundingbox.area - BB2#boundingbox.area) ->
+	        {{G1, BB1},{ G2 ++ [Elem], Group2BB}};
+	    true ->
+	        {{G1 ++ [Elem], Group1BB},{ G2, BB2 }}
+            end
+	    end, {{Group1, generate_bounding_box_list(Group1)},{Group2, generate_bounding_box_list(Group2)}}, Clean2),
+	{{FinalGroup1,_},{FinalGroup2,_}} = SplitGroups,
+    % io:format("Final group 1 = ~p Final group 2 = ~p ~n", [FinalGroup1, FinalGroup2]),
+	[FinalGroup1,FinalGroup2].
 
 %% Choose two elements from the max_node_entries+1 value list
 %% by finding the most "wasteful" bounding box of two antipodal figures
@@ -107,8 +126,7 @@ quadratic_pick_seeds(Values) ->
 	CombinationValues = all_combinations(Values, []),
 	{_, {_, FinalBoundingBox, Seeds} } = lists:mapfoldl(
 	fun({Figure1,Figure2}=Elem, {D,_BB,Pair}=Acc) -> 
-	    io:format("Figure1 = ~p Figure2 = ~p ~n", [Figure1, Figure2]),
-        % BoundingBox = generate_bounding_box(Elem),
+        % io:format("Figure1 = ~p Figure2 = ~p ~n", [Figure1, Figure2]),
         BoundingBox = generate_bounding_box_list([Figure1,Figure2]),
 		Figure1Area = figure_area(Figure1),
 		Figure2Area = figure_area(Figure2),
@@ -118,7 +136,7 @@ quadratic_pick_seeds(Values) ->
 			{Elem, Acc}
 		end
 	end, {0,#boundingbox{}, {} }, CombinationValues),
-	io:format("Seeds = ~p BoundingBox = ~p ~n", [Seeds, FinalBoundingBox]),
+    % io:format("Seeds = ~p BoundingBox = ~p ~n", [Seeds, FinalBoundingBox]),
 	Seeds.
 
 %% Generate all combinations of list pairs
@@ -144,7 +162,9 @@ figure_area(Figure1) ->
 
 %%  Generate a bounding box around arbitrary number of rectangles
 generate_bounding_box_list(Figures) ->
-    %Find the greatest Y coordinate
+
+    % io:format("Finding Y coordinate = ~p ~n", [Figures]),
+    
     {_, {FinalTopY,FinalTopPoint}} = lists:mapfoldl(fun(Figure, {TopYValue, _TopPoint}=Acc) ->
         {X,Y} = topmost_point(Figure),
         if Y > TopYValue ->
@@ -154,6 +174,7 @@ generate_bounding_box_list(Figures) ->
         end
     end, {0,{}}, Figures),
     
+    % io:format("Finding another coordinate = ~p ~n", [Figures]),
     
     {_, {FinalBottomY,FinalBottomPoint}} = lists:mapfoldl(fun(Figure, {BottomYValue, _BottomPoint}=Acc) ->
         {_X,Y}=NewBottomPoint = bottommost_point(Figure),
