@@ -37,6 +37,9 @@
 % -export([start_link/2]).
 -export([new_tree/0]).
 -export([insert/2]).
+-export([is_root/2]).
+-export([get_root/1]).
+
 % -export([choose_leaf/1]).
 % -export([all_combinations/2]).
 
@@ -45,6 +48,8 @@
 				max_node_entries}).
 
 -record(node, {boundingbox, values=[], children=[], parent}).
+
+-record(childref, {boundingbox, child}).
 
 -record(boundingbox, {topleft,topright,bottomleft,bottomright, area}).
 
@@ -77,13 +82,59 @@ insert(#rtree{root=RTreeRoot}=RTree, {Figure, Data}=NewRecord) ->
 			NewValues = lists:append(Node#node.values, [Figure]),
 			update_node(RTree,Node,NewValues);
 		false -> 
-			quadratic_split(lists:append(Node#node.values, [Figure]))
+			[Node1, Node2] = quadratic_split(lists:append(Node#node.values, [Figure])),
+			case is_root(RTree,Node) of
+			    true ->
+			    NewRoot = #node{children=[Node1,Node2]},
+			    RTree#rtree{root=NewRoot};
+			false ->
+			    ok
+			    %Not a root split
+		    end
 	end.
+	
+adjust_tree(RTree, Node1) ->
+    adjust_tree(RTree,Node1,[]).
+    
+adjust_tree(RTree, Node1, _ ) when RTree#rtree.root == Node1 ->
+    root_found;
+    
+% Addition, but no split was generated from insertion
+adjust_tree(RTree, Node1, []) ->
+    Parent = Node1#node.parent,
+    ChildRef = find_child_ref(Parent,Node1),
+    ChildFigures = find_all_descendent_figures(ChildRef),
+    NewBB = generate_bounding_box_list(ChildFigures),
+    ChildRef1 = ChildRef#childref{boundingbox = NewBB};
+adjust_tree(RTree, Node1, Node2) ->
+    Parent = Node1#node.parent,
+    ChildRef = find_child_ref(Parent,Node1),
+    ChildFigures = find_all_descendent_figures(ChildRef),
+    NewBB = generate_bounding_box_list(ChildFigures),
+    ChildRef1 = ChildRef#childref{boundingbox = NewBB},
+    
+    ChildFigures2 = find_all_descendent_figures(Node2),
+    NewBB2 = generate_bounding_box_list(ChildFigures2),
+    ChildRef2 = ChildRef#childref{boundingbox=NewBB2, child=Node2},
+    
+    case has_child_space(RTree,Parent) of
+    true->
+        % Add the new children nodes to the parent
+        NewParent1 = add_child(Parent,ChildRef1),
+        NewParent2 = add_child(Parent, ChildRef2);
+    false ->
+        % split_node(RTree,Parent),
+        split_parent
+    end,
+    ok.
 	
 %% Clean up the RTree
 update_node(RTree,Node,NewValues) ->
 	NewNode = Node#node{values=NewValues},
 	NewRTree = RTree#rtree{root=NewNode}.
+	
+add_child(Node, ChildRef) ->
+    NewNode = Node#node{children=Node#node.children ++ [ChildRef]}.
 
 %% Determine if the node in question is a leaf node
 is_leaf(Node) -> 
@@ -92,6 +143,16 @@ is_leaf(Node) ->
 	true ->
 		true
 	end.
+	
+get_root(RTree) ->
+    RTree#rtree.root.
+
+is_root(RTree,Node) ->
+    RTree#rtree.root == Node.
+	
+find_child_ref(Parent,Child) ->
+    Children = Parent#node.children,
+    lists:keyfind(Child, 2, Children).
 	
 %% Split a leaf node that has exceeded max_node_entries using
 %% the quadratic method
@@ -116,9 +177,10 @@ quadratic_split(Values) ->
 	        {{G1 ++ [Elem], Group1BB},{ G2, BB2 }}
             end
 	    end, {{Group1, generate_bounding_box_list(Group1)},{Group2, generate_bounding_box_list(Group2)}}, Clean2),
-	{{FinalGroup1,_},{FinalGroup2,_}} = SplitGroups,
+	{{FinalGroup1,FinalGroup1BB },{FinalGroup2, FinalGroup2BB }} = SplitGroups,
+	
     % io:format("Final group 1 = ~p Final group 2 = ~p ~n", [FinalGroup1, FinalGroup2]),
-	[FinalGroup1,FinalGroup2].
+	[#node{values=FinalGroup1, boundingbox=FinalGroup1BB },#node{values=FinalGroup2, boundingbox=FinalGroup2BB}].
 
 %% Choose two elements from the max_node_entries+1 value list
 %% by finding the most "wasteful" bounding box of two antipodal figures
@@ -146,6 +208,26 @@ all_combinations([H | T], Combinations) ->
 		{H,Elem}
 		end, T),
 	all_combinations(T, NewCombinations ++ Combinations).
+	
+
+% This is when we want all child figures of a specific child entry in an
+% interior node
+find_all_descendent_figures(ChildRef = #childref{}) ->
+    {_,SpecificChildNode} = ChildRef,
+    find_all_descendent_figures(SpecificChildNode);
+% All children of a given node
+find_all_descendent_figures(InteriorNode = #node{}) when InteriorNode#node.children > 0 ->
+    lists:foldl(fun({_,ChildRef}=Elem, Acc) -> 
+        Acc1 = Acc ++ find_all_descendent_figures(ChildRef),
+        Acc1
+        end, [], InteriorNode#node.children );
+% Processing a given leaf
+find_all_descendent_figures(LeafNode = #node{}) ->
+    find_all_descendent_figures( LeafNode#node.values);
+find_all_descendent_figures([]) ->
+    [];
+find_all_descendent_figures([H|T]) ->
+    H ++ find_all_descendent_figures(T).
 
 %%  Find the Area created by the two dimensional rectangle described by Figure
 figure_area(Figure1) ->
@@ -212,59 +294,8 @@ generate_bounding_box_list(Figures) ->
 	    bottomright={FinalRightX, FinalBottomY}, 
 	    bottomleft={FinalLeftX, FinalBottomY} },
 	    
-	io:format("Bounding box2 = ~p ~n", [BoundingBox]),
-	BoundingBox.
-
-%% Generate a bounding box around two rectangular figures
-% generate_bounding_box({Figure1, Figure2}) -> 
-%   % {Figure1, Figure2} = H,
-%   
-%     % io:format("Figure1, Figure2 = ~p ~p ~n", [Figure1, Figure2]),
-%   F1rm = rightmost_point(Figure1),
-%   F2rm = rightmost_point(Figure2),
-%   F1tm = topmost_point(Figure1),
-%   F2tm = topmost_point(Figure2),
-%   
-%   if F1tm > F2tm ->
-%       {_,TopCoordinate} = F1tm;
-%   true ->
-%       {_,TopCoordinate} = F2tm
-%   end,
-%   
-%   if F1rm > F2rm ->
-%       {RightCoordinate,_} = F1rm;
-%   true ->
-%       {RightCoordinate,_} = F2rm
-%   end,
-%   F1lm = leftmost_point(Figure1),
-%   F2lm = leftmost_point(Figure2),
-%   F1bm = bottommost_point(Figure1),
-%   F2bm = bottommost_point(Figure2),
-%   
-%   if F1bm < F2bm ->
-%       {_,BottomCoordinate} = F1bm;
-%   true ->
-%       {_,BottomCoordinate} = F2bm
-%   end,
-%   
-%   if F1lm < F2lm ->
-%       {LeftCoordinate,_} = F1lm;
-%   true ->
-%       {LeftCoordinate,_} = F2lm
-%   end,
-%   
-%   TopEdgeLength = abs(LeftCoordinate - RightCoordinate),
-%   SideEdgeLength = abs(TopCoordinate - BottomCoordinate),
-%   BBArea = TopEdgeLength * SideEdgeLength,
-%   BoundingBox = #boundingbox{ area=BBArea, 
-%       topleft={LeftCoordinate,TopCoordinate},
-%       topright={RightCoordinate, TopCoordinate}, 
-%       bottomright={RightCoordinate, BottomCoordinate}, 
-%       bottomleft={LeftCoordinate, BottomCoordinate} },
-%   
-%   io:format("Bounding box = ~p ~n", [BoundingBox]),
-%   
-%   BoundingBox.	
+    % io:format("Bounding box2 = ~p ~n", [BoundingBox]),
+	BoundingBox.	
 	
 %% Find the right-most point of a two dimensional figure
 rightmost_point({Point1,Point2}=_Figure) -> 
@@ -310,6 +341,16 @@ bottommost_point({Point1,Point2}=_Figure) ->
 has_space(RTree,Node) ->
 	Max = RTree#rtree.max_node_entries,
 	Values = Node#node.values,
+	if length(Values) + 1 =< Max ->
+		true;
+	true ->
+		false
+		%Requires a new node
+	end.
+	
+has_child_space(RTree,Node) ->
+	Max = RTree#rtree.max_node_entries,
+	Values = Node#node.children,
 	if length(Values) + 1 =< Max ->
 		true;
 	true ->
