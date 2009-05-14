@@ -76,16 +76,20 @@ new_tree() -> #rtree{root= #node{}, min_node_entries=1, max_node_entries=3}.
 %% Insert data into the tree
 insert(_RTree, {}) -> ok;
 insert(#rtree{root=RTreeRoot}=RTree, {Figure, Data}=NewRecord) -> 
-	Node = choose_leaf(RTreeRoot),
+	NodePath = choose_leaf(RTreeRoot,Figure,[]),
+	io:format("Node Path to LeafNode= ~p ~n", [NodePath]),
+	Node = lists:last(NodePath),
 	case has_space(RTree, Node) of
 		true -> 
+		    io:format("Space available for insert ~n", []),
 			NewValues = lists:append(Node#node.values, [Figure]),
-			update_node(RTree,Node,NewValues);
+			update_node(RTree,RTree#rtree.root,NodePath,NewValues);
 		false -> 
+		    io:format("Space NOT available for insert, doing quadratic split ~n", []),
 			[Node1, Node2] = quadratic_split(lists:append(Node#node.values, [Figure])),
 			case is_root(RTree,Node) of
 			    true ->
-			    NewRoot = #node{children=[Node1,Node2]},
+			    NewRoot = #node{children=[#childref{child=Node1, boundingbox=Node1#node.boundingbox},#childref{child=Node2, boundingbox=Node2#node.boundingbox}]},
 			    RTree#rtree{root=NewRoot};
 			false ->
 			    ok
@@ -129,12 +133,43 @@ adjust_tree(RTree, Node1, Node2) ->
     ok.
 	
 %% Clean up the RTree
-update_node(RTree,Node,NewValues) ->
-	NewNode = Node#node{values=NewValues},
-	NewRTree = RTree#rtree{root=NewNode}.
+update_node(RTree,CurrentNode,NodePath,NewValues) ->
+    NewRoot = update_node(RTree#rtree.root, NodePath, NewValues),
+    RTree#rtree{root=NewRoot}.
+
+update_node(CurrentNode, [CurrentNode], NewValues) ->
+    % Hit a leaf node
+    % io:format("Starting update_node CurrentNode= ~p LeafNode= ~p ~n", [CurrentNode, CurrentNode]),
+    CurrentNode#node{values=NewValues};
+update_node(CurrentNode, [], NewValues) ->
+    % io:format("Starting second update_node CurrentNode= ~p ~n", [CurrentNode]),
+    CurrentNode#node{values=NewValues};
+update_node(CurrentNode,[NextNode | RemainingPath ],NewValues) ->
+    % io:format("Starting update_node CurrentNode= ~p NextNode= ~p ~n", [CurrentNode, NextNode]),
+    ChildRef = find_child_ref(CurrentNode,NextNode),
+    UpdatedChild = update_node(ChildRef#childref.child , RemainingPath, NewValues),
+    CurrentWithoutChild = remove_child(CurrentNode,ChildRef),
+    CurrentWithNewChild = add_child(CurrentWithoutChild,#childref{child=UpdatedChild}),
+    UpdatedBB = CurrentWithNewChild#node{children= refresh_child_ref_boundingboxes(CurrentWithNewChild#node.children)},
+    UpdatedBB.
 	
+%% Add a child reference to a node
 add_child(Node, ChildRef) ->
+    % io:format("Adding child reference ~p ~p ~n", [Node,ChildRef]),
     NewNode = Node#node{children=Node#node.children ++ [ChildRef]}.
+    
+%% Remove a child reference from a node
+remove_child(Node, ChildRef) ->
+    % io:format("Removing child reference ~p ~p ~n", [Node,ChildRef]),
+    NewNode = Node#node{children=Node#node.children -- [ChildRef]}.
+
+%% Given a list of child references update their corresponding bounding boxes
+refresh_child_ref_boundingboxes(ChildRefList) ->
+    lists:map(fun(Elem) -> 
+        Figures = find_all_descendent_figures(Elem#childref.child),
+        BoundingBox = generate_bounding_box_list(Figures),
+        Elem#childref{boundingbox=BoundingBox} 
+        end, ChildRefList).
 
 %% Determine if the node in question is a leaf node
 is_leaf(Node) -> 
@@ -152,7 +187,17 @@ is_root(RTree,Node) ->
 	
 find_child_ref(Parent,Child) ->
     Children = Parent#node.children,
-    lists:keyfind(Child, 2, Children).
+    % {_,Result} = lists:keysearch(Child, 2, Children),
+    {Result} = lists:foldl(fun(Elem,Acc) -> 
+        % io:format("Looking for child reference ~p Child =~p ~n", [Elem,Child]),
+        case Elem#childref.child == Child of
+            true ->
+                {Elem};
+            false ->
+                Acc
+            end
+        end, {lists:nth(1,Children)}, Children),
+    Result.
 	
 %% Split a leaf node that has exceeded max_node_entries using
 %% the quadratic method
@@ -213,21 +258,29 @@ all_combinations([H | T], Combinations) ->
 % This is when we want all child figures of a specific child entry in an
 % interior node
 find_all_descendent_figures(ChildRef = #childref{}) ->
-    {_,SpecificChildNode} = ChildRef,
-    find_all_descendent_figures(SpecificChildNode);
+    io:format("Processing a child ref = ~p ~n", [ChildRef]),
+    % {_,SpecificChildNode} = ChildRef,
+    % find_all_descendent_figures(SpecificChildNode);
+    find_all_descendent_figures(ChildRef#childref.child);
 % All children of a given node
-find_all_descendent_figures(InteriorNode = #node{}) when InteriorNode#node.children > 0 ->
-    lists:foldl(fun({_,ChildRef}=Elem, Acc) -> 
-        Acc1 = Acc ++ find_all_descendent_figures(ChildRef),
+find_all_descendent_figures(InteriorNode = #node{}) when length(InteriorNode#node.children) > 0 ->
+    io:format("Processing an interior node = ~p ~n", [InteriorNode]),
+    
+    lists:foldl(fun(Elem, Acc) -> 
+        io:format("Acc = ~p Elem = ~p ~n", [Acc, Elem]),
+        Acc1 = Acc ++ find_all_descendent_figures(Elem),
         Acc1
         end, [], InteriorNode#node.children );
 % Processing a given leaf
 find_all_descendent_figures(LeafNode = #node{}) ->
+    io:format("Hit a leaf node = ~p ~n", [LeafNode]),
     find_all_descendent_figures( LeafNode#node.values);
 find_all_descendent_figures([]) ->
+    io:format("Empty list! ~n", []),
     [];
 find_all_descendent_figures([H|T]) ->
-    H ++ find_all_descendent_figures(T).
+    io:format("Processing head = ~p ~n", [H]),
+    [H] ++ find_all_descendent_figures(T).
 
 %%  Find the Area created by the two dimensional rectangle described by Figure
 figure_area(Figure1) ->
@@ -240,6 +293,9 @@ figure_area(Figure1) ->
 	{_F1bm_x,F1bm_y} = F1bm,
 	{F1rm_x,_F1rm_y} = F1rm,
 	Figure1Area = abs(F1lm_x - F1rm_x) * abs(F1tm_y - F1bm_y).
+
+area_difference(BoundingBox1=#boundingbox{}, BoundingBox2=#boundingbox{}) ->
+    abs(BoundingBox1#boundingbox.area - BoundingBox2#boundingbox.area).
 
 
 %%  Generate a bounding box around arbitrary number of rectangles
@@ -338,14 +394,17 @@ bottommost_point({Point1,Point2}=_Figure) ->
 	end.
 
 %% Determine if a given leaf node has space for another value
-has_space(RTree,Node) ->
+has_space(RTree,ChildRef=#childref{}) ->
+    has_space(RTree,ChildRef#childref.child);
+has_space(RTree,Node=#node{}) ->
+    io:format("has_space/2 RTree= ~p Node ~p ~n", [RTree, Node]),
 	Max = RTree#rtree.max_node_entries,
 	Values = Node#node.values,
 	if length(Values) + 1 =< Max ->
 		true;
 	true ->
+	    %Requires a new node
 		false
-		%Requires a new node
 	end.
 	
 has_child_space(RTree,Node) ->
@@ -359,10 +418,24 @@ has_child_space(RTree,Node) ->
 	end.
 
 %% Choose a leaf for adding a new value to on insert
-choose_leaf(Node) -> 
+%% Returns a complete path from root to leaf with the leaf
+%% as the last element in the list
+choose_leaf(Node, Figure, Path) -> 
 	case is_leaf(Node) of
-		true -> Node;
-		false -> Node
-		%Still needs choose-subtree and descent operations
+		true -> Path ++ [Node];
+		false ->
+		    % Find the entry in
+		    {_, NextNode} = lists:foldl(fun(Elem, {Area,_}=Acc) -> 
+		        io:format("choose_leaf Elem= ~p Acc= ~p ~n", [Elem, Acc]),
+		        AllFigures = find_all_descendent_figures(Elem),
+		        BoundingBox = generate_bounding_box_list(AllFigures),
+                case area_difference(BoundingBox, Elem#childref.boundingbox) < Area of true ->
+                    % io:format("Changed ACC = ~p ~n", [Elem]),
+                    {BoundingBox#boundingbox.area, Elem#childref.child};
+                _ ->
+                    Acc
+                    end
+		        end, {infinity,[]}, Node#node.children),
+		Path ++ choose_leaf(NextNode, Figure, Path)
 	end.
 	
