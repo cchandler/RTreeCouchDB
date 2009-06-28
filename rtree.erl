@@ -77,7 +77,7 @@ new_tree() -> #rtree{root= #node{}, min_node_entries=1, max_node_entries=3}.
 insert(_RTree, {}) -> ok;
 insert(#rtree{root=RTreeRoot}=RTree, {Figure, Data}=NewRecord) -> 
 	NodePath = choose_leaf(RTreeRoot,Figure,[]),
-	io:format("Node Path to LeafNode= ~p ~n", [NodePath]),
+	io:format("Node Path to LeafNode= ~p ~n", [length(NodePath)]),
 	Node = lists:last(NodePath),
 	NewValues = lists:append(Node#node.values, [Figure]),
 	NewRoot = update_node(RTree,RTree#rtree.root,NodePath,NewValues),
@@ -489,6 +489,6 @@ choose_leaf(Node, Figure, Path) ->
                     Acc
                     end
 		        end, {infinity,[]}, Node#node.children),
-		Path ++ choose_leaf(NextNode, Figure, Path)
+		choose_leaf(NextNode, Figure, Path ++ [NextNode])
 	end.
 	
