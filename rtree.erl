@@ -36,6 +36,8 @@
 % -export([start_link/2, start/2, stop/0]).
 % -export([start_link/2]).
 -export([new_tree/0]).
+-export([search/2]).
+-export([count_leaf_values/1]).
 -export([insert/2]).
 -export([is_root/2]).
 -export([get_root/1]).
@@ -72,6 +74,46 @@
 %% Generate a new basic tree
 new_tree() -> #rtree{root= #node{}, min_node_entries=1, max_node_entries=3}.
 
+count_leaf_values(#rtree{root=RTreeRoot}=RTree) ->
+    count_leaf_values(RTreeRoot);
+count_leaf_values(Node) ->
+    case is_leaf(Node) of
+       true ->
+           io:format("Current values: ~p ~n", [Node#node.values]),
+           length(Node#node.values);
+       false ->
+           Result = lists:foldl(fun(Elem, Acc) -> 
+                  Acc + count_leaf_values(Elem#childref.child)
+                 end, 
+              0, Node#node.children)
+    end.
+
+search(#rtree{root=RTreeRoot}=RTree, Figure) ->
+ search(RTreeRoot, Figure);
+search(Node, Figure) ->
+  case is_leaf(Node) of
+     true ->
+         %Scan local node with a foldl
+         Result = lists:foldl(fun(Elem, Acc) -> 
+             case detect_overlap(Elem, Figure) of
+                 true ->
+                     Acc ++ [Elem];
+                 false ->
+                     Acc
+              end
+            end, 
+         [], Node#node.values);
+     false ->
+         Result = lists:foldl(fun(Elem, Acc) -> 
+              case detect_overlap(Elem#childref.boundingbox, Figure) of
+                  true ->
+                      Acc ++ search(Elem#childref.child, Figure);
+                  false ->
+                      Acc
+               end
+             end, 
+          [], Node#node.children)
+  end.
 
 %% Insert data into the tree
 insert(_RTree, {}) -> ok;
@@ -139,15 +181,25 @@ update_node(RTree, CurrentNode,[NextNode | RemainingPath ],NewValues) ->
                     case is_root(RTree, CurrentNode) of
                         true ->
                             io:format("A split occurred at the root , splitting self ~n", []),
-                            [NewNode1, NewNode2] = quadratic_split_children(CurrentNode#node.children ++ [#childref{child=Node2, boundingbox=Node2#node.boundingbox}]),
-                            {split, NewNode1, NewNode2},
+                            % io:format("Node1 ~p ~n ",[Node1#node.values]),
+                            % io:format("Node2 ~p ~n ",[Node2#node.values]),
+                            CurrentWithoutChild = remove_child(CurrentNode,ChildRef),
+                            CurrentWithSplitChild1 = add_child(CurrentWithoutChild,#childref{child=Node1,boundingbox=Node1#node.boundingbox}),
+                            CurrentWithSplitChild2 = add_child(CurrentWithSplitChild1,#childref{child=Node2,boundingbox=Node2#node.boundingbox}),
+                            [NewNode1, NewNode2] = quadratic_split_children(CurrentWithSplitChild2#node.children),
+                            % io:format("NewNode1 ~p ~n ",[NewNode1]),
+                            % io:format("NewNode2 ~p ~n ",[NewNode2]),
+                            % {split, NewNode1, NewNode2},
                             
                             % Grow the tree
                             io:format("Growing the tree ~n", []),
                             NewRoot = #node{children=[#childref{child=NewNode1, boundingbox=NewNode1#node.boundingbox},#childref{child=NewNode2, boundingbox=Node2#node.boundingbox}]};
                         false ->
                             io:format("A split occurred in the child, splitting self ~n", []),
-                            [NewNode1, NewNode2] = quadratic_split_children(CurrentNode#node.children ++ [#childref{child=Node2}]),
+                            CurrentWithoutChild = remove_child(CurrentNode,ChildRef),
+                            CurrentWithSplitChild1 = add_child(CurrentWithoutChild,#childref{child=Node1,boundingbox=Node1#node.boundingbox}),
+                            CurrentWithSplitChild2 = add_child(CurrentWithSplitChild1,#childref{child=Node2,boundingbox=Node2#node.boundingbox}),
+                            [NewNode1, NewNode2] = quadratic_split_children(CurrentWithSplitChild2#node.children),
                             {split, NewNode1, NewNode2}
                         end
                 end
@@ -203,6 +255,10 @@ quadratic_split_children(ChildRefs) ->
     {Seed1,Seed2} = quadratic_pick_seeds_children(ChildRefs),
 	Clean1 = lists:delete(Seed1, ChildRefs),
 	Clean2 = lists:delete(Seed2, Clean1),
+	io:format("Original list: ~p ~n ", [ChildRefs]),
+	io:format("Seed 1: ~p ~n", [Seed1]),
+	io:format("Seed 2: ~p ~n", [Seed2]),
+	io:format("Supposedly clean list: ~p ~n", [Clean2]),
 	Group1 = [Seed1],
 	Group2 = [Seed2],
 	% For each element in the remaining values go through and add
@@ -210,8 +266,6 @@ quadratic_split_children(ChildRefs) ->
 	% area to accomodate 
 	% Note: does not fully implement PickNext, uses a heuristic instead
 	SplitGroups = lists:foldl(fun(Elem, {{G1,BB1},{G2,BB2}}=Acc) -> 
-        % io:format("Starting fold Elem= ~p Acc= ~p ~n", [Elem, Acc]),
-        % io:format("G1 ++ Elem = ~p ~n", [G1 ++ Elem]),
 	    Group1BB = generate_bounding_box_list_bb(G1 ++ [Elem]),
 	    Group2BB = generate_bounding_box_list_bb(G2 ++ [Elem]),
 	    if (Group1BB#boundingbox.area - BB1#boundingbox.area) >=  (Group2BB#boundingbox.area - BB2#boundingbox.area) ->
@@ -222,7 +276,8 @@ quadratic_split_children(ChildRefs) ->
 	    end, {{Group1, generate_bounding_box_list_bb(Group1)},{Group2, generate_bounding_box_list_bb(Group2)}}, Clean2),
 	{{FinalGroup1,FinalGroup1BB },{FinalGroup2, FinalGroup2BB }} = SplitGroups,
 	
-    % io:format("Final group 1 = ~p Final group 2 = ~p ~n", [FinalGroup1, FinalGroup2]),
+    io:format("Final group 1 = ~p ~n", [FinalGroup1]),
+    io:format("Final group 2 = ~p ~n", [FinalGroup2]),
 	[#node{children=FinalGroup1, boundingbox=FinalGroup1BB },#node{children=FinalGroup2, boundingbox=FinalGroup2BB}].
     
 %% Choose two elements from the max_node_entries+1 value list
@@ -323,13 +378,10 @@ find_all_descendent_figures(InteriorNode = #node{}) when length(InteriorNode#nod
         end, [], InteriorNode#node.children );
 % Processing a given leaf
 find_all_descendent_figures(LeafNode = #node{}) ->
-    % io:format("Hit a leaf node = ~p ~n", [LeafNode]),
     find_all_descendent_figures( LeafNode#node.values);
 find_all_descendent_figures([]) ->
-    % io:format("Empty list! ~n", []),
     [];
 find_all_descendent_figures([H|T]) ->
-    % io:format("Processing head = ~p ~n", [H]),
     [H] ++ find_all_descendent_figures(T).
 
 %%  Find the Area created by the two dimensional rectangle described by Figure
@@ -452,7 +504,7 @@ bottommost_point({Point1,Point2}=_Figure) ->
 has_space(RTree,ChildRef=#childref{}) ->
     has_space(RTree,ChildRef#childref.child);
 has_space(RTree,Node=#node{}) ->
-    io:format("has_space/2 RTree= ~p Node ~p ~n", [RTree, Node]),
+    %io:format("has_space/2 RTree= ~p Node ~p ~n", [RTree, Node]),
 	Max = RTree#rtree.max_node_entries,
 	Values = Node#node.values,
 	if length(Values) + 1 =< Max ->
@@ -483,7 +535,6 @@ choose_leaf(Node, Figure, Path) ->
 		        AllFigures = find_all_descendent_figures(Elem),
 		        BoundingBox = generate_bounding_box_list(AllFigures),
                 case area_difference(BoundingBox, Elem#childref.boundingbox) < Area of true ->
-                    % io:format("Changed ACC = ~p ~n", [Elem]),
                     {BoundingBox#boundingbox.area, Elem#childref.child};
                 _ ->
                     Acc
@@ -491,4 +542,47 @@ choose_leaf(Node, Figure, Path) ->
 		        end, {infinity,[]}, Node#node.children),
 		choose_leaf(NextNode, Figure, Path ++ [NextNode])
 	end.
-	
+
+
+detect_overlap(BoundingBox=#boundingbox{}, Figure=#boundingbox{}) ->
+    Points = [BoundingBox#boundingbox.topleft, BoundingBox#boundingbox.topright, BoundingBox#boundingbox.bottomleft, BoundingBox#boundingbox.bottomright],
+    Colissions = lists:foldl( fun(Elem, Acc) ->
+        case is_interior_point(Figure, Elem) of
+            true ->
+                Acc + 1;
+            false ->
+                Acc
+         end
+        end, 0, Points),
+    Points2 = [Figure#boundingbox.topleft, Figure#boundingbox.topright, Figure#boundingbox.bottomleft, Figure#boundingbox.bottomright],
+    Colissions2 = lists:foldl( fun(Elem, Acc) ->
+        case is_interior_point(BoundingBox, Elem) of
+            true ->
+                Acc + 1;
+            false ->
+                Acc
+         end
+        end, 0, Points2),
+    if (Colissions+Colissions2) > 0 ->
+        true;
+    true ->
+        false
+    end;
+detect_overlap(NodeValue=#boundingbox{}, Figure) ->
+    BB2 = generate_bounding_box_list([Figure]),
+    detect_overlap(NodeValue,BB2);
+detect_overlap(NodeValue, Figure) ->
+    BB1 = generate_bounding_box_list([NodeValue]),
+    BB2 = generate_bounding_box_list([Figure]),
+    detect_overlap(BB1,BB2).
+    
+is_interior_point(BoundingBox=#boundingbox{}, {X,Y}=Point) ->
+    {MinX,_} = BoundingBox#boundingbox.topleft,
+    {MaxX,_} = BoundingBox#boundingbox.topright,
+    {_,MinY} = BoundingBox#boundingbox.bottomleft,
+    {_,MaxY} = BoundingBox#boundingbox.topleft,
+    if (X > MinX) and (X =< MaxX) and (Y > MinY) and (Y =< MaxY) ->
+        true;
+    true ->
+        false
+    end.
