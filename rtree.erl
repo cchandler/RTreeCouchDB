@@ -181,16 +181,11 @@ update_node(RTree, CurrentNode,[NextNode | RemainingPath ],NewValues) ->
                     case is_root(RTree, CurrentNode) of
                         true ->
                             io:format("A split occurred at the root , splitting self ~n", []),
-                            % io:format("Node1 ~p ~n ",[Node1#node.values]),
-                            % io:format("Node2 ~p ~n ",[Node2#node.values]),
                             CurrentWithoutChild = remove_child(CurrentNode,ChildRef),
                             CurrentWithSplitChild1 = add_child(CurrentWithoutChild,#childref{child=Node1,boundingbox=Node1#node.boundingbox}),
                             CurrentWithSplitChild2 = add_child(CurrentWithSplitChild1,#childref{child=Node2,boundingbox=Node2#node.boundingbox}),
                             [NewNode1, NewNode2] = quadratic_split_children(CurrentWithSplitChild2#node.children),
-                            % io:format("NewNode1 ~p ~n ",[NewNode1]),
-                            % io:format("NewNode2 ~p ~n ",[NewNode2]),
-                            % {split, NewNode1, NewNode2},
-                            
+
                             % Grow the tree
                             io:format("Growing the tree ~n", []),
                             NewRoot = #node{children=[#childref{child=NewNode1, boundingbox=NewNode1#node.boundingbox},#childref{child=NewNode2, boundingbox=Node2#node.boundingbox}]};
