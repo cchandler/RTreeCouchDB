@@ -51,6 +51,8 @@
 
 -record(node, {boundingbox, values=[], children=[], parent}).
 
+-record(key, {feature, value}).
+
 -record(childref, {boundingbox, child}).
 
 -record(boundingbox, {topleft,topright,bottomleft,bottomright, area}).
@@ -74,12 +76,12 @@
 %% Generate a new basic tree
 new_tree() -> #rtree{root= #node{}, min_node_entries=1, max_node_entries=3}.
 
+%% Count the number of leaves in the tree
 count_leaf_values(#rtree{root=RTreeRoot}=RTree) ->
     count_leaf_values(RTreeRoot);
 count_leaf_values(Node) ->
     case is_leaf(Node) of
        true ->
-           io:format("Current values: ~p ~n", [Node#node.values]),
            length(Node#node.values);
        false ->
            Result = lists:foldl(fun(Elem, Acc) -> 
@@ -88,14 +90,15 @@ count_leaf_values(Node) ->
               0, Node#node.children)
     end.
 
-search(#rtree{root=RTreeRoot}=RTree, Figure) ->
- search(RTreeRoot, Figure);
-search(Node, Figure) ->
+%% Search a given RTree with a given hyperplane/figure search
+search(#rtree{root=RTreeRoot}=RTree, SearchHyperplane) ->
+ search(RTreeRoot, SearchHyperplane);
+search(Node, SearchHyperplane) ->
   case is_leaf(Node) of
      true ->
          %Scan local node with a foldl
          Result = lists:foldl(fun(Elem, Acc) -> 
-             case detect_overlap(Elem, Figure) of
+             case detect_overlap(Elem#key.feature, SearchHyperplane) of
                  true ->
                      Acc ++ [Elem];
                  false ->
@@ -105,9 +108,9 @@ search(Node, Figure) ->
          [], Node#node.values);
      false ->
          Result = lists:foldl(fun(Elem, Acc) -> 
-              case detect_overlap(Elem#childref.boundingbox, Figure) of
+              case detect_overlap(Elem#childref.boundingbox, SearchHyperplane) of
                   true ->
-                      Acc ++ search(Elem#childref.child, Figure);
+                      Acc ++ search(Elem#childref.child, SearchHyperplane);
                   false ->
                       Acc
                end
@@ -119,15 +122,16 @@ search(Node, Figure) ->
 insert(_RTree, {}) -> ok;
 insert(#rtree{root=RTreeRoot}=RTree, {Figure, Data}=NewRecord) -> 
 	NodePath = choose_leaf(RTreeRoot,Figure,[]),
-	io:format("Node Path to LeafNode= ~p ~n", [length(NodePath)]),
+    % io:format("Node Path to LeafNode= ~p ~n", [length(NodePath)]),
 	Node = lists:last(NodePath),
-	NewValues = lists:append(Node#node.values, [Figure]),
+	NewKey = #key{feature=Figure,value=Data},
+	NewValues = lists:append(Node#node.values, [NewKey]),
 	NewRoot = update_node(RTree,RTree#rtree.root,NodePath,NewValues),
 	RTree#rtree{root=NewRoot}.
 
+%% update_node is really the insert's execution method
 update_node(RTree, CurrentNode, [CurrentNode], NewValues) ->
     % This case only applies when the root is the only node in the tree
-    io:format("#1 Starting update_node CurrentNode= ~p LeafNode= ~p ~n", [CurrentNode, CurrentNode]),
     case has_space(#rtree{min_node_entries=1,max_node_entries=3}, CurrentNode) of
         true ->
             CurrentNode#node{values=NewValues};
@@ -143,8 +147,8 @@ update_node(RTree, CurrentNode, [CurrentNode], NewValues) ->
             end
     end;
 update_node(RTree, CurrentNode, [], NewValues) ->
-    io:format("#2 Starting second update_node CurrentNode= ~p ~n", [CurrentNode]),
-    case has_space(#rtree{min_node_entries=1,max_node_entries=3}, CurrentNode) of
+    % io:format("#2 Starting second update_node CurrentNode= ~p ~n", [CurrentNode]),
+    case has_space(RTree, CurrentNode) of
         true ->
             CurrentNode#node{values=NewValues};
         false ->
@@ -163,34 +167,35 @@ update_node(RTree, CurrentNode,[NextNode | RemainingPath ],NewValues) ->
     ChildRef = find_child_ref(CurrentNode,NextNode),
     case update_node(RTree, ChildRef#childref.child , RemainingPath, NewValues) of
         UpdatedChild=#node{} ->
-            % io:format("Adding child no problem ~n", []),
             CurrentWithoutChild = remove_child(CurrentNode,ChildRef),
-            CurrentWithNewChild = add_child(CurrentWithoutChild,#childref{child=UpdatedChild}),
-            UpdatedBB = CurrentWithNewChild#node{children= refresh_child_ref_boundingboxes(CurrentWithNewChild#node.children)},
-            UpdatedBB;
+            CurrentWithNewChild = add_child(CurrentWithoutChild,#childref{child=UpdatedChild, boundingbox=UpdatedChild#node.boundingbox}),
+            % UpdatedBB = CurrentWithNewChild#node{children= refresh_child_ref_boundingboxes(CurrentWithNewChild#node.children)},
+            CurrentWithNewChild#node{boundingbox = refresh_child_ref_boundingboxes(CurrentWithNewChild)};
+            % UpdatedBB;
         {split, Node1, Node2} ->
             case has_child_space(RTree,CurrentNode) of
                 true->
                     %Room for both new nodes is available
-                    io:format("Adding 2 new children ~n", []),
+                    % io:format("Adding 2 new children ~n", []),
                     CurrentWithoutChild = remove_child(CurrentNode,ChildRef),
-                    CurrentWithSplitChild1 = add_child(CurrentWithoutChild,#childref{child=Node1}),
-                    CurrentWithSplitChild2 = add_child(CurrentWithSplitChild1,#childref{child=Node2}),
-                    CurrentWithSplitChild2#node{children= refresh_child_ref_boundingboxes(CurrentWithSplitChild2#node.children)};
+                    CurrentWithSplitChild1 = add_child(CurrentWithoutChild,#childref{child=Node1, boundingbox=Node1#node.boundingbox}),
+                    CurrentWithSplitChild2 = add_child(CurrentWithSplitChild1,#childref{child=Node2, boundingbox=Node2#node.boundingbox}),
+                    % CurrentWithSplitChild2#node{children= refresh_child_ref_boundingboxes(CurrentWithSplitChild2#node.children)};
+                    CurrentWithSplitChild2#node{boundingbox = refresh_child_ref_boundingboxes(CurrentWithSplitChild2)};
                 false ->
                     case is_root(RTree, CurrentNode) of
                         true ->
-                            io:format("A split occurred at the root , splitting self ~n", []),
+                            % io:format("A split occurred at the root , splitting self ~n", []),
                             CurrentWithoutChild = remove_child(CurrentNode,ChildRef),
                             CurrentWithSplitChild1 = add_child(CurrentWithoutChild,#childref{child=Node1,boundingbox=Node1#node.boundingbox}),
                             CurrentWithSplitChild2 = add_child(CurrentWithSplitChild1,#childref{child=Node2,boundingbox=Node2#node.boundingbox}),
                             [NewNode1, NewNode2] = quadratic_split_children(CurrentWithSplitChild2#node.children),
 
                             % Grow the tree
-                            io:format("Growing the tree ~n", []),
+                            % io:format("Growing the tree ~n", []),
                             NewRoot = #node{children=[#childref{child=NewNode1, boundingbox=NewNode1#node.boundingbox},#childref{child=NewNode2, boundingbox=Node2#node.boundingbox}]};
                         false ->
-                            io:format("A split occurred in the child, splitting self ~n", []),
+                            % io:format("A split occurred in the child, splitting self ~n", []),
                             CurrentWithoutChild = remove_child(CurrentNode,ChildRef),
                             CurrentWithSplitChild1 = add_child(CurrentWithoutChild,#childref{child=Node1,boundingbox=Node1#node.boundingbox}),
                             CurrentWithSplitChild2 = add_child(CurrentWithSplitChild1,#childref{child=Node2,boundingbox=Node2#node.boundingbox}),
@@ -210,13 +215,10 @@ remove_child(Node, ChildRef) ->
     % io:format("Removing child reference ~p ~p ~n", [Node,ChildRef]),
     NewNode = Node#node{children=Node#node.children -- [ChildRef]}.
 
-%% Given a list of child references update their corresponding bounding boxes
-refresh_child_ref_boundingboxes(ChildRefList) ->
-    lists:map(fun(Elem) -> 
-        Figures = find_all_descendent_figures(Elem#childref.child),
-        BoundingBox = generate_bounding_box_list(Figures),
-        Elem#childref{boundingbox=BoundingBox} 
-        end, ChildRefList).
+%% Given a list of child references update the
+%% current node's boundingbox.
+refresh_child_ref_boundingboxes(Node) ->    
+    NewBoundingBox = generate_bounding_box_list_bb(Node#node.children).
 
 %% Determine if the node in question is a leaf node
 is_leaf(Node) -> 
@@ -232,6 +234,7 @@ get_root(RTree) ->
 is_root(RTree,Node) ->
     RTree#rtree.root == Node.
 	
+%% Locate a specific childref in a node
 find_child_ref(Parent,Child) ->
     Children = Parent#node.children,
     % {_,Result} = lists:keysearch(Child, 2, Children),
@@ -246,14 +249,11 @@ find_child_ref(Parent,Child) ->
         end, {lists:nth(1,Children)}, Children),
     Result.
 	
+%% Split an overful list of M+1 childrefs
 quadratic_split_children(ChildRefs) ->
     {Seed1,Seed2} = quadratic_pick_seeds_children(ChildRefs),
 	Clean1 = lists:delete(Seed1, ChildRefs),
 	Clean2 = lists:delete(Seed2, Clean1),
-	io:format("Original list: ~p ~n ", [ChildRefs]),
-	io:format("Seed 1: ~p ~n", [Seed1]),
-	io:format("Seed 2: ~p ~n", [Seed2]),
-	io:format("Supposedly clean list: ~p ~n", [Clean2]),
 	Group1 = [Seed1],
 	Group2 = [Seed2],
 	% For each element in the remaining values go through and add
@@ -270,9 +270,6 @@ quadratic_split_children(ChildRefs) ->
             end
 	    end, {{Group1, generate_bounding_box_list_bb(Group1)},{Group2, generate_bounding_box_list_bb(Group2)}}, Clean2),
 	{{FinalGroup1,FinalGroup1BB },{FinalGroup2, FinalGroup2BB }} = SplitGroups,
-	
-    io:format("Final group 1 = ~p ~n", [FinalGroup1]),
-    io:format("Final group 2 = ~p ~n", [FinalGroup2]),
 	[#node{children=FinalGroup1, boundingbox=FinalGroup1BB },#node{children=FinalGroup2, boundingbox=FinalGroup2BB}].
     
 %% Choose two elements from the max_node_entries+1 value list
@@ -281,24 +278,19 @@ quadratic_pick_seeds_children(Values) ->
 	CombinationValues = all_combinations(Values, []),
 	{_, {_, FinalBoundingBox, Seeds} } = lists:mapfoldl(
 	fun({Child1,Child2}=Elem, {D,_BB,Pair}=Acc) -> 
-        io:format("Child1 = ~p Child2 = ~p ~n", [Child1, Child2]),
-        % Make up a figure composed of top-left and bottom-right
         BBFigure1 = Child1#childref.boundingbox,
         BBFigure2 = Child2#childref.boundingbox,
-        io:format("Produced BB ~n", []),
-        Figure1 = {BBFigure1#boundingbox.topleft, BBFigure1#boundingbox.bottomright},
-        Figure2 = {BBFigure2#boundingbox.topleft, BBFigure2#boundingbox.bottomright},
+        Figure1 = #key{feature={BBFigure1#boundingbox.topleft, BBFigure1#boundingbox.bottomright}},
+        Figure2 = #key{feature={BBFigure2#boundingbox.topleft, BBFigure2#boundingbox.bottomright}},
         BoundingBox = generate_bounding_box_list([Figure1,Figure2]),
-        io:format("Constructed BB ~n", []),
-		Figure1Area = figure_area(Figure1),
-		Figure2Area = figure_area(Figure2),
+		Figure1Area = figure_area(Figure1#key.feature),
+		Figure2Area = figure_area(Figure2#key.feature),
 		if BoundingBox#boundingbox.area - (Figure1Area - Figure2Area) > D ->
 			{Elem, {BoundingBox#boundingbox.area,BoundingBox, {Child1,Child2}}};
 		true ->
 			{Elem, Acc}
 		end
 	end, {0,#boundingbox{}, {} }, CombinationValues),
-    % io:format("Seeds = ~p BoundingBox = ~p ~n", [Seeds, FinalBoundingBox]),
 	Seeds.
     	
 %% Split a leaf node that has exceeded max_node_entries using
@@ -314,8 +306,6 @@ quadratic_split(Values) ->
 	% area to accomodate 
 	% Note: does not fully implement PickNext, uses a heuristic instead
 	SplitGroups = lists:foldl(fun(Elem, {{G1,BB1},{G2,BB2}}=Acc) -> 
-        % io:format("Starting fold Elem= ~p Acc= ~p ~n", [Elem, Acc]),
-        % io:format("G1 ++ Elem = ~p ~n", [G1 ++ Elem]),
 	    Group1BB = generate_bounding_box_list(G1 ++ [Elem]),
 	    Group2BB = generate_bounding_box_list(G2 ++ [Elem]),
 	    if (Group1BB#boundingbox.area - BB1#boundingbox.area) >=  (Group2BB#boundingbox.area - BB2#boundingbox.area) ->
@@ -334,18 +324,16 @@ quadratic_split(Values) ->
 quadratic_pick_seeds(Values) -> 
 	CombinationValues = all_combinations(Values, []),
 	{_, {_, FinalBoundingBox, Seeds} } = lists:mapfoldl(
-	fun({Figure1,Figure2}=Elem, {D,_BB,Pair}=Acc) -> 
-        % io:format("Figure1 = ~p Figure2 = ~p ~n", [Figure1, Figure2]),
-        BoundingBox = generate_bounding_box_list([Figure1,Figure2]),
-		Figure1Area = figure_area(Figure1),
-		Figure2Area = figure_area(Figure2),
+	fun({Key1,Key2}=Elem, {D,_BB,Pair}=Acc) -> 
+        BoundingBox = generate_bounding_box_list([Key1,Key2]),
+		Figure1Area = figure_area(Key1#key.feature),
+		Figure2Area = figure_area(Key2#key.feature),
 		if BoundingBox#boundingbox.area - (Figure1Area - Figure2Area) > D ->
-			{Elem, {BoundingBox#boundingbox.area,BoundingBox, {Figure1,Figure2}}};
+			{Elem, {BoundingBox#boundingbox.area,BoundingBox, {Key1,Key2}}};
 		true ->
 			{Elem, Acc}
 		end
 	end, {0,#boundingbox{}, {} }, CombinationValues),
-    % io:format("Seeds = ~p BoundingBox = ~p ~n", [Seeds, FinalBoundingBox]),
 	Seeds.
 
 %% Generate all combinations of list pairs
@@ -355,29 +343,6 @@ all_combinations([H | T], Combinations) ->
 		{H,Elem}
 		end, T),
 	all_combinations(T, NewCombinations ++ Combinations).
-	
-
-% This is when we want all child figures of a specific child entry in an
-% interior node
-find_all_descendent_figures(ChildRef = #childref{}) ->
-    % io:format("Processing a child ref = ~p ~n", [ChildRef]),
-    find_all_descendent_figures(ChildRef#childref.child);
-% All children of a given node
-find_all_descendent_figures(InteriorNode = #node{}) when length(InteriorNode#node.children) > 0 ->
-    % io:format("Processing an interior node = ~p ~n", [InteriorNode]),
-    
-    lists:foldl(fun(Elem, Acc) -> 
-        io:format("Acc = ~p Elem = ~p ~n", [Acc, Elem]),
-        Acc1 = Acc ++ find_all_descendent_figures(Elem),
-        Acc1
-        end, [], InteriorNode#node.children );
-% Processing a given leaf
-find_all_descendent_figures(LeafNode = #node{}) ->
-    find_all_descendent_figures( LeafNode#node.values);
-find_all_descendent_figures([]) ->
-    [];
-find_all_descendent_figures([H|T]) ->
-    [H] ++ find_all_descendent_figures(T).
 
 %%  Find the Area created by the two dimensional rectangle described by Figure
 figure_area(Figure1) ->
@@ -399,49 +364,50 @@ generate_bounding_box_list_bb(BoundingBoxes) ->
     ConvertedList = lists:foldl(fun(Elem, Acc) -> 
         BB1 = Elem#childref.boundingbox,
         BB2 = Elem#childref.boundingbox,
-        Acc ++ [{BB1#boundingbox.topleft, BB2#boundingbox.bottomright}] 
+        Acc ++ [#key{feature={BB1#boundingbox.topleft, BB2#boundingbox.bottomright}}] 
         end, [], BoundingBoxes),
     generate_bounding_box_list(ConvertedList).
 
 %%  Generate a bounding box around arbitrary number of rectangles
-generate_bounding_box_list(Figures) ->
+generate_bounding_box_list(Keys) ->
+    % io:format("Bounding box list ~p ~n", [Keys]),
     {_, {FinalTopY,FinalTopPoint}} = lists:mapfoldl(fun(Figure, {TopYValue, _TopPoint}=Acc) ->
-        {X,Y} = topmost_point(Figure),
+        {X,Y} = topmost_point(Figure#key.feature),
         if Y > TopYValue ->
             {Figure, {Y, {X,Y}} };
         true ->
             {Figure, Acc}
         end
-    end, {0,{}}, Figures),
+    end, {0,{}}, Keys),
     
     % io:format("Finding another coordinate = ~p ~n", [Figures]),
     
     {_, {FinalBottomY,FinalBottomPoint}} = lists:mapfoldl(fun(Figure, {BottomYValue, _BottomPoint}=Acc) ->
-        {_X,Y}=NewBottomPoint = bottommost_point(Figure),
+        {_X,Y}=NewBottomPoint = bottommost_point(Figure#key.feature),
         if Y < BottomYValue ->
             {Figure, {Y, NewBottomPoint} };
         true ->
             {Figure, Acc}
         end
-    end, {infinity,{}}, Figures),
+    end, {infinity,{}}, Keys),
     
     {_, {FinalLeftX,FinalLeftPoint}} = lists:mapfoldl(fun(Figure, {LeftXValue, _LeftPoint}=Acc) ->
-        {X,_Y}=NewLeftPoint = leftmost_point(Figure),
+        {X,_Y}=NewLeftPoint = leftmost_point(Figure#key.feature),
         if X < LeftXValue ->
             {Figure, {X, NewLeftPoint} };
         true ->
             {Figure, Acc}
         end
-    end, {infinity,{}}, Figures),
+    end, {infinity,{}}, Keys),
     
     {_, {FinalRightX,FinalRightPoint}} = lists:mapfoldl(fun(Figure, {RightXValue, _RightPoint}=Acc) ->
-        {X,_Y}=NewRightPoint = rightmost_point(Figure),
+        {X,_Y}=NewRightPoint = rightmost_point(Figure#key.feature),
         if X > RightXValue ->
             {Figure, {X, NewRightPoint} };
         true ->
             {Figure, Acc}
         end
-    end, {0,{}}, Figures),
+    end, {0,{}}, Keys),
     
     TopEdgeLength = abs(FinalLeftX - FinalRightX),
 	SideEdgeLength = abs(FinalTopY - FinalBottomY),
@@ -526,9 +492,11 @@ choose_leaf(Node, Figure, Path) ->
 		false ->
 		    % Find the entry in
 		    {_, NextNode} = lists:foldl(fun(Elem, {Area,_}=Acc) -> 
-                % io:format("choose_leaf Elem= ~p Acc= ~p ~n", [Elem, Acc]),
-		        AllFigures = find_all_descendent_figures(Elem),
-		        BoundingBox = generate_bounding_box_list(AllFigures),
+                BB1 = generate_bounding_box_list([#key{feature=Figure}]),
+                BB2 = generate_bounding_box_list_bb([Elem#childref{}]),
+                % Generating childrefs just to pass references to an already
+                % kludged version of generate_bounding_box_list.  FIX THIS
+                BoundingBox = generate_bounding_box_list_bb([#childref{boundingbox=BB1}] ++ [#childref{boundingbox=BB2}]),
                 case area_difference(BoundingBox, Elem#childref.boundingbox) < Area of true ->
                     {BoundingBox#boundingbox.area, Elem#childref.child};
                 _ ->
@@ -564,11 +532,11 @@ detect_overlap(BoundingBox=#boundingbox{}, Figure=#boundingbox{}) ->
         false
     end;
 detect_overlap(NodeValue=#boundingbox{}, Figure) ->
-    BB2 = generate_bounding_box_list([Figure]),
+    BB2 = generate_bounding_box_list([#key{feature=Figure}]),
     detect_overlap(NodeValue,BB2);
 detect_overlap(NodeValue, Figure) ->
-    BB1 = generate_bounding_box_list([NodeValue]),
-    BB2 = generate_bounding_box_list([Figure]),
+    BB1 = generate_bounding_box_list([#key{feature=NodeValue}]),
+    BB2 = generate_bounding_box_list([#key{feature=Figure}]),
     detect_overlap(BB1,BB2).
     
 is_interior_point(BoundingBox=#boundingbox{}, {X,Y}=Point) ->
