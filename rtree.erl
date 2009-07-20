@@ -45,6 +45,8 @@
 % -export([choose_leaf/1]).
 % -export([all_combinations/2]).
 
+-define(IS_LEAF(Node), length(Node#node.children) == 0).
+
 -record(rtree, {root, 
 				min_node_entries,
 				max_node_entries}).
@@ -79,44 +81,38 @@ new_tree() -> #rtree{root= #node{}, min_node_entries=1, max_node_entries=3}.
 %% Count the number of leaves in the tree
 count_leaf_values(#rtree{root=RTreeRoot}=RTree) ->
     count_leaf_values(RTreeRoot);
+count_leaf_values(Node) when ?IS_LEAF(Node) ->
+    length(Node#node.values);
 count_leaf_values(Node) ->
-    case is_leaf(Node) of
-       true ->
-           length(Node#node.values);
-       false ->
-           Result = lists:foldl(fun(Elem, Acc) -> 
-                  Acc + count_leaf_values(Elem#childref.child)
-                 end, 
-              0, Node#node.children)
-    end.
+    Result = lists:foldl(fun(Elem, Acc) -> 
+				 Acc + count_leaf_values(Elem#childref.child)
+			 end, 
+			 0, Node#node.children).
 
 %% Search a given RTree with a given hyperplane/figure search
 search(#rtree{root=RTreeRoot}=RTree, SearchHyperplane) ->
  search(RTreeRoot, SearchHyperplane);
-search(Node, SearchHyperplane) ->
-  case is_leaf(Node) of
-     true ->
-         %Scan local node with a foldl
-         Result = lists:foldl(fun(Elem, Acc) -> 
-             case detect_overlap(Elem#key.feature, SearchHyperplane) of
-                 true ->
-                     Acc ++ [Elem];
-                 false ->
-                     Acc
-              end
-            end, 
-         [], Node#node.values);
-     false ->
-         Result = lists:foldl(fun(Elem, Acc) -> 
-              case detect_overlap(Elem#childref.boundingbox, SearchHyperplane) of
-                  true ->
-                      Acc ++ search(Elem#childref.child, SearchHyperplane);
-                  false ->
-                      Acc
-               end
-             end, 
-          [], Node#node.children)
-  end.
+%Scan local node with a foldl
+search(Node, SearchHyperplane) when ?IS_LEAF(Node) ->
+    Result = lists:foldl(fun(Elem, Acc) -> 						
+				 case detect_overlap(Elem#key.feature, SearchHyperplane) of
+				     true ->
+					 Acc ++ [Elem];
+				     false ->
+					 Acc
+				 end
+			 end, 
+			 [], Node#node.values);
+search(Node, SearchHyperplane)->
+    Result = lists:foldl(fun(Elem, Acc) -> 
+				 case detect_overlap(Elem#childref.boundingbox, SearchHyperplane) of
+				     true ->
+					 Acc ++ search(Elem#childref.child, SearchHyperplane);
+				     false ->
+					 Acc
+				 end
+			 end, 
+			 [], Node#node.children).
 
 %% Insert data into the tree
 insert(_RTree, {}) -> ok;
@@ -220,14 +216,7 @@ remove_child(Node, ChildRef) ->
 refresh_child_ref_boundingboxes(Node) ->    
     NewBoundingBox = generate_bounding_box_list_bb(Node#node.children).
 
-%% Determine if the node in question is a leaf node
-is_leaf(Node) -> 
-	if length(Node#node.children) > 0 ->
-		false;
-	true ->
-		true
-	end.
-	
+
 get_root(RTree) ->
     RTree#rtree.root.
 
@@ -486,25 +475,24 @@ has_child_space(RTree,Node) ->
 %% Choose a leaf for adding a new value to on insert
 %% Returns a complete path from root to leaf with the leaf
 %% as the last element in the list
+choose_leaf(Node, Figure, Path) when ?IS_LEAF(Node) -> 
+    Path ++ [Node];
+
+% Find the entry in
 choose_leaf(Node, Figure, Path) -> 
-	case is_leaf(Node) of
-		true -> Path ++ [Node];
-		false ->
-		    % Find the entry in
-		    {_, NextNode} = lists:foldl(fun(Elem, {Area,_}=Acc) -> 
-                BB1 = generate_bounding_box_list([#key{feature=Figure}]),
-                BB2 = generate_bounding_box_list_bb([Elem#childref{}]),
-                % Generating childrefs just to pass references to an already
-                % kludged version of generate_bounding_box_list.  FIX THIS
-                BoundingBox = generate_bounding_box_list_bb([#childref{boundingbox=BB1}] ++ [#childref{boundingbox=BB2}]),
-                case area_difference(BoundingBox, Elem#childref.boundingbox) < Area of true ->
-                    {BoundingBox#boundingbox.area, Elem#childref.child};
-                _ ->
-                    Acc
-                    end
+    {_, NextNode} = lists:foldl(fun(Elem, {Area,_}=Acc) -> 
+					BB1 = generate_bounding_box_list([#key{feature=Figure}]),
+					BB2 = generate_bounding_box_list_bb([Elem#childref{}]),
+						% Generating childrefs just to pass references to an already
+						% kludged version of generate_bounding_box_list.  FIX THIS
+					BoundingBox = generate_bounding_box_list_bb([#childref{boundingbox=BB1}] ++ [#childref{boundingbox=BB2}]),
+					case area_difference(BoundingBox, Elem#childref.boundingbox) < Area of true ->
+						{BoundingBox#boundingbox.area, Elem#childref.child};
+					    _ ->
+						Acc
+					end
 		        end, {infinity,[]}, Node#node.children),
-		choose_leaf(NextNode, Figure, Path ++ [NextNode])
-	end.
+    choose_leaf(NextNode, Figure, Path ++ [NextNode]).
 
 
 detect_overlap(BoundingBox=#boundingbox{}, Figure=#boundingbox{}) ->
