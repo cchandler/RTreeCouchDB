@@ -457,20 +457,12 @@ has_space(RTree,Node=#node{}) ->
     %io:format("has_space/2 RTree= ~p Node ~p ~n", [RTree, Node]),
 	Max = RTree#rtree.max_node_entries,
 	Values = Node#node.values,
-	if length(Values) + 1 =< Max ->
-		true;
-	true ->
-		false
-	end.
+	length(Values) + 1 =< Max.
 	
 has_child_space(RTree,Node) ->
 	Max = RTree#rtree.max_node_entries,
 	Values = Node#node.children,
-	if length(Values) + 1 =< Max ->
-		true;
-	true ->
-		false
-	end.
+	length(Values) + 1 =< Max.
 
 %% Choose a leaf for adding a new value to on insert
 %% Returns a complete path from root to leaf with the leaf
@@ -514,11 +506,8 @@ detect_overlap(BoundingBox=#boundingbox{}, Figure=#boundingbox{}) ->
                 Acc
          end
         end, 0, Points2),
-    if (Colissions+Colissions2) > 0 ->
-        true;
-    true ->
-        false
-    end;
+    (Colissions+Colissions2) > 0;
+
 detect_overlap(NodeValue=#boundingbox{}, Figure) ->
     BB2 = generate_bounding_box_list([#key{feature=Figure}]),
     detect_overlap(NodeValue,BB2);
@@ -532,8 +521,4 @@ is_interior_point(BoundingBox=#boundingbox{}, {X,Y}=_Point) ->
     {MaxX,_} = BoundingBox#boundingbox.topright,
     {_,MinY} = BoundingBox#boundingbox.bottomleft,
     {_,MaxY} = BoundingBox#boundingbox.topleft,
-    if (X > MinX) and (X =< MaxX) and (Y > MinY) and (Y =< MaxY) ->
-        true;
-    true ->
-        false
-    end.
+    ((X > MinX) and (X =< MaxX) and (Y > MinY) and (Y =< MaxY)).
