@@ -79,44 +79,44 @@
 new_tree() -> #rtree{root= #node{}, min_node_entries=1, max_node_entries=3}.
 
 %% Count the number of leaves in the tree
-count_leaf_values(#rtree{root=RTreeRoot}=RTree) ->
+count_leaf_values(#rtree{root=RTreeRoot}) ->
     count_leaf_values(RTreeRoot);
 count_leaf_values(Node) when ?IS_LEAF(Node) ->
     length(Node#node.values);
 count_leaf_values(Node) ->
-    Result = lists:foldl(fun(Elem, Acc) -> 
-				 Acc + count_leaf_values(Elem#childref.child)
-			 end, 
-			 0, Node#node.children).
+    lists:foldl(fun(Elem, Acc) -> 
+			Acc + count_leaf_values(Elem#childref.child)
+		end, 
+		0, Node#node.children).
 
 %% Search a given RTree with a given hyperplane/figure search
-search(#rtree{root=RTreeRoot}=RTree, SearchHyperplane) ->
+search(#rtree{root=RTreeRoot}, SearchHyperplane) ->
  search(RTreeRoot, SearchHyperplane);
 %Scan local node with a foldl
 search(Node, SearchHyperplane) when ?IS_LEAF(Node) ->
-    Result = lists:foldl(fun(Elem, Acc) -> 						
-				 case detect_overlap(Elem#key.feature, SearchHyperplane) of
-				     true ->
-					 Acc ++ [Elem];
-				     false ->
-					 Acc
-				 end
-			 end, 
-			 [], Node#node.values);
+    lists:foldl(fun(Elem, Acc) -> 						
+			case detect_overlap(Elem#key.feature, SearchHyperplane) of
+			    true ->
+				Acc ++ [Elem];
+			    false ->
+				Acc
+			end
+		end, 
+		[], Node#node.values);
 search(Node, SearchHyperplane)->
-    Result = lists:foldl(fun(Elem, Acc) -> 
-				 case detect_overlap(Elem#childref.boundingbox, SearchHyperplane) of
-				     true ->
-					 Acc ++ search(Elem#childref.child, SearchHyperplane);
-				     false ->
-					 Acc
-				 end
-			 end, 
-			 [], Node#node.children).
+    lists:foldl(fun(Elem, Acc) -> 
+			case detect_overlap(Elem#childref.boundingbox, SearchHyperplane) of
+			    true ->
+				Acc ++ search(Elem#childref.child, SearchHyperplane);
+			    false ->
+				Acc
+			end
+		end, 
+		[], Node#node.children).
 
 %% Insert data into the tree
 insert(_RTree, {}) -> ok;
-insert(#rtree{root=RTreeRoot}=RTree, {Figure, Data}=NewRecord) -> 
+insert(#rtree{root=RTreeRoot}=RTree, {Figure, Data}) -> 
 	NodePath = choose_leaf(RTreeRoot,Figure,[]),
     % io:format("Node Path to LeafNode= ~p ~n", [length(NodePath)]),
 	Node = lists:last(NodePath),
@@ -136,7 +136,7 @@ update_node(RTree, CurrentNode, [CurrentNode], NewValues) ->
             % This is a special ugly case when we need to account for the root
             case is_root(RTree,CurrentNode) of
                 true ->
-                    NewRoot = #node{children=[#childref{child=Node1, boundingbox=Node1#node.boundingbox},#childref{child=Node2, boundingbox=Node2#node.boundingbox}]};
+                    #node{children=[#childref{child=Node1, boundingbox=Node1#node.boundingbox},#childref{child=Node2, boundingbox=Node2#node.boundingbox}]};
                 false ->
                     % If it wasn't the root then this needs to propagate up
                     {split, Node1, Node2}
@@ -152,7 +152,7 @@ update_node(RTree, CurrentNode, [], NewValues) ->
             % This is a special ugly case when we need to account for the root
             case is_root(RTree,CurrentNode) of
                 true ->
-                    NewRoot = #node{children=[#childref{child=Node1, boundingbox=Node1#node.boundingbox},#childref{child=Node2, boundingbox=Node2#node.boundingbox}]};
+                    #node{children=[#childref{child=Node1, boundingbox=Node1#node.boundingbox},#childref{child=Node2, boundingbox=Node2#node.boundingbox}]};
                 false ->
                     % If it wasn't the root then this needs to propagate up
                     {split, Node1, Node2}
@@ -189,7 +189,7 @@ update_node(RTree, CurrentNode,[NextNode | RemainingPath ],NewValues) ->
 
                             % Grow the tree
                             % io:format("Growing the tree ~n", []),
-                            NewRoot = #node{children=[#childref{child=NewNode1, boundingbox=NewNode1#node.boundingbox},#childref{child=NewNode2, boundingbox=Node2#node.boundingbox}]};
+                            #node{children=[#childref{child=NewNode1, boundingbox=NewNode1#node.boundingbox},#childref{child=NewNode2, boundingbox=Node2#node.boundingbox}]};
                         false ->
                             % io:format("A split occurred in the child, splitting self ~n", []),
                             CurrentWithoutChild = remove_child(CurrentNode,ChildRef),
@@ -204,17 +204,17 @@ update_node(RTree, CurrentNode,[NextNode | RemainingPath ],NewValues) ->
 %% Add a child reference to a node
 add_child(Node, ChildRef) ->
     % io:format("Adding child reference ~p ~p ~n", [Node,ChildRef]),
-    NewNode = Node#node{children=Node#node.children ++ [ChildRef]}.
+    Node#node{children=Node#node.children ++ [ChildRef]}.
     
 %% Remove a child reference from a node
 remove_child(Node, ChildRef) ->
     % io:format("Removing child reference ~p ~p ~n", [Node,ChildRef]),
-    NewNode = Node#node{children=Node#node.children -- [ChildRef]}.
+    Node#node{children=Node#node.children -- [ChildRef]}.
 
 %% Given a list of child references update the
 %% current node's boundingbox.
 refresh_child_ref_boundingboxes(Node) ->    
-    NewBoundingBox = generate_bounding_box_list_bb(Node#node.children).
+    _NewBoundingBox = generate_bounding_box_list_bb(Node#node.children).
 
 
 get_root(RTree) ->
@@ -249,7 +249,7 @@ quadratic_split_children(ChildRefs) ->
 	% that point to the group that would require the least increase in
 	% area to accomodate 
 	% Note: does not fully implement PickNext, uses a heuristic instead
-	SplitGroups = lists:foldl(fun(Elem, {{G1,BB1},{G2,BB2}}=Acc) -> 
+	SplitGroups = lists:foldl(fun(Elem, {{G1,BB1},{G2,BB2}}) -> 
 	    Group1BB = generate_bounding_box_list_bb(G1 ++ [Elem]),
 	    Group2BB = generate_bounding_box_list_bb(G2 ++ [Elem]),
 	    if (Group1BB#boundingbox.area - BB1#boundingbox.area) >=  (Group2BB#boundingbox.area - BB2#boundingbox.area) ->
@@ -265,8 +265,8 @@ quadratic_split_children(ChildRefs) ->
 %% by finding the most "wasteful" bounding box of two antipodal figures
 quadratic_pick_seeds_children(Values) -> 
 	CombinationValues = all_combinations(Values, []),
-	{_, {_, FinalBoundingBox, Seeds} } = lists:mapfoldl(
-	fun({Child1,Child2}=Elem, {D,_BB,Pair}=Acc) -> 
+	{_, {_, _FinalBoundingBox, Seeds} } = lists:mapfoldl(
+	fun({Child1,Child2}=Elem, {D,_BB,_Pair}=Acc) -> 
         BBFigure1 = Child1#childref.boundingbox,
         BBFigure2 = Child2#childref.boundingbox,
         Figure1 = #key{feature={BBFigure1#boundingbox.topleft, BBFigure1#boundingbox.bottomright}},
@@ -294,7 +294,7 @@ quadratic_split(Values) ->
 	% that point to the group that would require the least increase in
 	% area to accomodate 
 	% Note: does not fully implement PickNext, uses a heuristic instead
-	SplitGroups = lists:foldl(fun(Elem, {{G1,BB1},{G2,BB2}}=Acc) -> 
+	SplitGroups = lists:foldl(fun(Elem, {{G1,BB1},{G2,BB2}}) -> 
 	    Group1BB = generate_bounding_box_list(G1 ++ [Elem]),
 	    Group2BB = generate_bounding_box_list(G2 ++ [Elem]),
 	    if (Group1BB#boundingbox.area - BB1#boundingbox.area) >=  (Group2BB#boundingbox.area - BB2#boundingbox.area) ->
@@ -312,8 +312,8 @@ quadratic_split(Values) ->
 %% by finding the most "wasteful" bounding box of two antipodal figures
 quadratic_pick_seeds(Values) -> 
 	CombinationValues = all_combinations(Values, []),
-	{_, {_, FinalBoundingBox, Seeds} } = lists:mapfoldl(
-	fun({Key1,Key2}=Elem, {D,_BB,Pair}=Acc) -> 
+	{_, {_, _FinalBoundingBox, Seeds} } = lists:mapfoldl(
+	fun({Key1,Key2}=Elem, {D,_BB,_Pair}=Acc) -> 
         BoundingBox = generate_bounding_box_list([Key1,Key2]),
 		Figure1Area = figure_area(Key1#key.feature),
 		Figure2Area = figure_area(Key2#key.feature),
@@ -343,7 +343,7 @@ figure_area(Figure1) ->
 	{F1lm_x,_F1lm_y} = F1lm,
 	{_F1bm_x,F1bm_y} = F1bm,
 	{F1rm_x,_F1rm_y} = F1rm,
-	Figure1Area = abs(F1lm_x - F1rm_x) * abs(F1tm_y - F1bm_y).
+	_Figure1Area = abs(F1lm_x - F1rm_x) * abs(F1tm_y - F1bm_y).
 
 area_difference(BoundingBox1=#boundingbox{}, BoundingBox2=#boundingbox{}) ->
     abs(BoundingBox1#boundingbox.area - BoundingBox2#boundingbox.area).
@@ -360,7 +360,7 @@ generate_bounding_box_list_bb(BoundingBoxes) ->
 %%  Generate a bounding box around arbitrary number of rectangles
 generate_bounding_box_list(Keys) ->
     % io:format("Bounding box list ~p ~n", [Keys]),
-    {_, {FinalTopY,FinalTopPoint}} = lists:mapfoldl(fun(Figure, {TopYValue, _TopPoint}=Acc) ->
+    {_, {FinalTopY,_FinalTopPoint}} = lists:mapfoldl(fun(Figure, {TopYValue, _TopPoint}=Acc) ->
         {X,Y} = topmost_point(Figure#key.feature),
         if Y > TopYValue ->
             {Figure, {Y, {X,Y}} };
@@ -371,7 +371,7 @@ generate_bounding_box_list(Keys) ->
     
     % io:format("Finding another coordinate = ~p ~n", [Figures]),
     
-    {_, {FinalBottomY,FinalBottomPoint}} = lists:mapfoldl(fun(Figure, {BottomYValue, _BottomPoint}=Acc) ->
+    {_, {FinalBottomY,_FinalBottomPoint}} = lists:mapfoldl(fun(Figure, {BottomYValue, _BottomPoint}=Acc) ->
         {_X,Y}=NewBottomPoint = bottommost_point(Figure#key.feature),
         if Y < BottomYValue ->
             {Figure, {Y, NewBottomPoint} };
@@ -380,7 +380,7 @@ generate_bounding_box_list(Keys) ->
         end
     end, {infinity,{}}, Keys),
     
-    {_, {FinalLeftX,FinalLeftPoint}} = lists:mapfoldl(fun(Figure, {LeftXValue, _LeftPoint}=Acc) ->
+    {_, {FinalLeftX,_FinalLeftPoint}} = lists:mapfoldl(fun(Figure, {LeftXValue, _LeftPoint}=Acc) ->
         {X,_Y}=NewLeftPoint = leftmost_point(Figure#key.feature),
         if X < LeftXValue ->
             {Figure, {X, NewLeftPoint} };
@@ -389,7 +389,7 @@ generate_bounding_box_list(Keys) ->
         end
     end, {infinity,{}}, Keys),
     
-    {_, {FinalRightX,FinalRightPoint}} = lists:mapfoldl(fun(Figure, {RightXValue, _RightPoint}=Acc) ->
+    {_, {FinalRightX,_FinalRightPoint}} = lists:mapfoldl(fun(Figure, {RightXValue, _RightPoint}=Acc) ->
         {X,_Y}=NewRightPoint = rightmost_point(Figure#key.feature),
         if X > RightXValue ->
             {Figure, {X, NewRightPoint} };
@@ -412,8 +412,8 @@ generate_bounding_box_list(Keys) ->
 	
 %% Find the right-most point of a two dimensional figure
 rightmost_point({Point1,Point2}=_Figure) -> 
-	{X1,Y1} = Point1,
-	{X2,Y2} = Point2,
+	{X1,_Y1} = Point1,
+	{X2,_Y2} = Point2,
 	if X1 > X2 ->
 		Point1;
 	true ->
@@ -422,8 +422,8 @@ rightmost_point({Point1,Point2}=_Figure) ->
 
 %% Find the left-most point of a two dimensional figure	
 leftmost_point({Point1,Point2}=_Figure) -> 
-	{X1,Y1} = Point1,
-	{X2,Y2} = Point2,
+	{X1,_Y1} = Point1,
+	{X2,_Y2} = Point2,
 	if X1 < X2 ->
 		Point1;
 	true ->
@@ -432,8 +432,8 @@ leftmost_point({Point1,Point2}=_Figure) ->
 
 %% Find the top-most point of a two dimensional figure
 topmost_point({Point1,Point2}=_Figure) -> 
-	{X1,Y1} = Point1,
-	{X2,Y2} = Point2,
+	{_X1,Y1} = Point1,
+	{_X2,Y2} = Point2,
 	if Y1 > Y2 ->
 		Point1;
 	true ->
@@ -442,8 +442,8 @@ topmost_point({Point1,Point2}=_Figure) ->
 
 %% Find the bottom-most point of a two dimensional figure
 bottommost_point({Point1,Point2}=_Figure) -> 
-	{X1,Y1} = Point1,
-	{X2,Y2} = Point2,
+	{_X1,Y1} = Point1,
+	{_X2,Y2} = Point2,
 	if Y1 < Y2 ->
 		Point1;
 	true ->
@@ -475,7 +475,7 @@ has_child_space(RTree,Node) ->
 %% Choose a leaf for adding a new value to on insert
 %% Returns a complete path from root to leaf with the leaf
 %% as the last element in the list
-choose_leaf(Node, Figure, Path) when ?IS_LEAF(Node) -> 
+choose_leaf(Node, _Figure, Path) when ?IS_LEAF(Node) -> 
     Path ++ [Node];
 
 % Find the entry in
@@ -527,7 +527,7 @@ detect_overlap(NodeValue, Figure) ->
     BB2 = generate_bounding_box_list([#key{feature=Figure}]),
     detect_overlap(BB1,BB2).
     
-is_interior_point(BoundingBox=#boundingbox{}, {X,Y}=Point) ->
+is_interior_point(BoundingBox=#boundingbox{}, {X,Y}=_Point) ->
     {MinX,_} = BoundingBox#boundingbox.topleft,
     {MaxX,_} = BoundingBox#boundingbox.topright,
     {_,MinY} = BoundingBox#boundingbox.bottomleft,
